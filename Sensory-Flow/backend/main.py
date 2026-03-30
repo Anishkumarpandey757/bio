@@ -13,7 +13,7 @@ import tempfile
 import shutil
 import uuid
 
-# Import exercise processors - Colab-exact versions (match external colab folders)
+# Import exercise processors (use fully qualified package imports)
 from backend.processors.prone_extension import process_prone_extension
 from backend.processors.supine_flexion import process_supine_flexion
 from backend.processors.one_leg_standing_colab_exact import process_one_leg_standing
@@ -33,7 +33,7 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5000", "http://localhost:5173", "http://localhost:3000", "*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -89,10 +89,10 @@ class ProcessingResult(BaseModel):
     success: bool
     exerciseId: str
     rawMetrics: Dict[str, Any]
-    scores: Dict[str, int]
-    totalScore: int
+    scores: Dict[str, Optional[int]]
+    totalScore: Optional[int]
     maxScore: int
-    interpretation: str
+    interpretation: Optional[str]
     error: Optional[str] = None
 
 
@@ -235,8 +235,8 @@ async def process_exercise(
             result = process_supine_flexion(side_video_path, age_years)
             
         elif exercise_id.startswith("one_leg"):
-            if not front_video_path:
-                raise HTTPException(status_code=400, detail="Front video required for one leg standing")
+            if not front_video_path or not side_video_path:
+                raise HTTPException(status_code=400, detail="Both front and side videos required for one leg standing")
             # Determine which leg and eyes condition
             raised_leg = "R" if "right" in exercise_id else "L"
             eyes_open = "open" in exercise_id
@@ -244,14 +244,14 @@ async def process_exercise(
             
         elif exercise_id.startswith("tandem_walking"):
             if not front_video_path:
-                raise HTTPException(status_code=400, detail="Front video required for tandem walking")
+                raise HTTPException(status_code=400, detail="Video required for tandem walking")
             eyes_open = "open" in exercise_id
             result = process_tandem_walking(front_video_path, side_video_path, age_years, eyes_open)
             
         elif exercise_id == "jumping_jacks":
             if not front_video_path:
                 raise HTTPException(status_code=400, detail="Video required for jumping jacks")
-            result = process_jumping_jacks(front_video_path, age_years)
+            result = process_jumping_jacks(front_video_path, side_video_path, age_years)
             
         else:
             raise HTTPException(status_code=400, detail=f"Unknown exercise type: {exercise_id}")
@@ -332,19 +332,20 @@ async def process_exercise_files(
         elif exercise_id.startswith("one_leg"):
             if not front_path or not side_path:
                 raise HTTPException(status_code=400, detail="Both front and side videos required for one leg standing")
+            # Determine which leg and eyes condition
             raised_leg = "R" if "right" in exercise_id else "L"
             eyes_open = "open" in exercise_id
             result = process_one_leg_standing(front_path, side_path, age_years, eyes_open, raised_leg)
             
         elif exercise_id.startswith("tandem_walking"):
-            if not front_path or not side_path:
-                raise HTTPException(status_code=400, detail="Both front and side videos required for tandem walking")
+            if not front_path:
+                raise HTTPException(status_code=400, detail="Video required for tandem walking")
             eyes_open = "open" in exercise_id
             result = process_tandem_walking(front_path, side_path, age_years, eyes_open)
             
         elif exercise_id == "jumping_jacks":
             if not front_path:
-                raise HTTPException(status_code=400, detail="Front video required for jumping jacks")
+                raise HTTPException(status_code=400, detail="Video required for jumping jacks")
             result = process_jumping_jacks(front_path, side_path, age_years)
             
         else:
@@ -372,12 +373,7 @@ async def process_exercise_files(
         return {
             "success": False,
             "exerciseId": exercise_id,
-            "error": str(e),
-            "rawMetrics": {},
-            "scores": {},
-            "totalScore": 0,
-            "maxScore": 0,
-            "interpretation": f"Error: {e}",
+            "error": str(e)
         }
     finally:
         # Cleanup temp files

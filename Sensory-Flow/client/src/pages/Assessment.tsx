@@ -30,6 +30,8 @@ function ExerciseUploadStep() {
     
     const videoUrl = URL.createObjectURL(file);
     updateExercise(exerciseId, {
+      status: "ready",
+      result: undefined,
       frontVideo: {
         videoFile: file,
         videoUrl,
@@ -44,6 +46,8 @@ function ExerciseUploadStep() {
     
     const videoUrl = URL.createObjectURL(file);
     updateExercise(exerciseId, {
+      status: "ready",
+      result: undefined,
       sideVideo: {
         videoFile: file,
         videoUrl,
@@ -58,6 +62,8 @@ function ExerciseUploadStep() {
     
     if (side === "front" && videoData.frontVideo) {
       updateExercise(exerciseId, {
+        status: "ready",
+        result: undefined,
         frontVideo: {
           ...videoData.frontVideo,
           trimStart: start,
@@ -67,6 +73,8 @@ function ExerciseUploadStep() {
       });
     } else if (side === "side" && videoData.sideVideo) {
       updateExercise(exerciseId, {
+        status: "ready",
+        result: undefined,
         sideVideo: {
           ...videoData.sideVideo,
           trimStart: start,
@@ -84,6 +92,8 @@ function ExerciseUploadStep() {
     if (side === "front" && videoData.frontVideo?.videoUrl) {
       URL.revokeObjectURL(videoData.frontVideo.videoUrl);
       updateExercise(exerciseId, {
+        status: "empty",
+        result: undefined,
         frontVideo: {
           status: "empty"
         }
@@ -91,6 +101,8 @@ function ExerciseUploadStep() {
     } else if (side === "side" && videoData.sideVideo?.videoUrl) {
       URL.revokeObjectURL(videoData.sideVideo.videoUrl);
       updateExercise(exerciseId, {
+        status: "empty",
+        result: undefined,
         sideVideo: {
           status: "empty"
         }
@@ -103,6 +115,7 @@ function ExerciseUploadStep() {
     if (!videoData) return;
 
     updateExercise(exerciseId, { status: "processing" });
+    setIsProcessing(true);
 
     try {
       const formData = new FormData();
@@ -156,6 +169,8 @@ function ExerciseUploadStep() {
       updateExercise(exerciseId, {
         status: "error"
       });
+    } finally {
+      setIsProcessing(false);
     }
   };
 

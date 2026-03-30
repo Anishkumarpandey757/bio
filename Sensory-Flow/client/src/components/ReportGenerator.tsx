@@ -5,6 +5,25 @@ import { format } from "date-fns";
 import type { AssessmentData } from "@shared/schema";
 import { exerciseTypes } from "@shared/schema";
 
+function toFiniteNumber(v: unknown): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function inferAgeYears(ageGroup?: string): 6 | 7 | null {
+  if (!ageGroup) return null;
+  if (ageGroup.includes("6 years")) return 6;
+  if (ageGroup.includes("7 years")) return 7;
+  return null;
+}
+
+function assessmentNorm(ageYears: 6 | 7 | null): { mean: number; sd: number } | null {
+  if (ageYears === 6) return { mean: 197, sd: 17 };
+  if (ageYears === 7) return { mean: 197, sd: 15 };
+  return null;
+}
+
 export function generateAssessmentReport(assessment: Partial<AssessmentData>): jsPDF {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -212,23 +231,83 @@ export function generateAssessmentReport(assessment: Partial<AssessmentData>): j
     doc.text("Assessment Results", 20, yPos);
     yPos += 5;
 
-    const isStandardAgeGroup = assessment.ageGroup?.includes("6 years") || assessment.ageGroup?.includes("7 years");
+    const exerciseHeaders = [["Exercise", "Score", "Interpretation", "Key Values"]];
 
-    const exerciseHeaders = isStandardAgeGroup 
-      ? [["Exercise", "Values", "Score"]]
-      : [["Exercise", "Values"]];
+    const completedWithScores = uploadedExercises.filter(ex => {
+      const score = toFiniteNumber(ex.result?.totalScore);
+      return score != null;
+    });
+
+    const totalAssessmentScore = completedWithScores.reduce((acc, ex) => {
+      const score = toFiniteNumber(ex.result?.totalScore);
+      return acc + (score ?? 0);
+    }, 0);
+
+    const ageYears = inferAgeYears(assessment.ageGroup);
+    const norm = assessmentNorm(ageYears);
+    const zScore = norm ? (totalAssessmentScore - norm.mean) / norm.sd : null;
+
+    const interp = zScore == null
+      ? "N/A"
+      : zScore <= -2
+      ? "Extremely Below Average"
+      : zScore <= -1
+      ? "Below Average"
+      : zScore < 1
+      ? "Average"
+      : zScore < 2
+      ? "Above Average"
+      : "Extremely Above Average";
 
     const exerciseData = uploadedExercises.map(ex => {
       const exerciseInfo = exerciseTypes.find(e => e.id === ex.exerciseId);
-      const values = ex.result?.values 
-        ? Object.entries(ex.result.values).map(([k, v]) => `${k}: ${v}`).join(", ")
-        : "Pending Analysis";
-      
-      if (isStandardAgeGroup) {
-        return [exerciseInfo?.name || ex.exerciseId, values, ex.result?.score?.toString() || "N/A"];
-      }
-      return [exerciseInfo?.name || ex.exerciseId, values];
+      const score = toFiniteNumber(ex.result?.totalScore);
+      const maxScore = toFiniteNumber(ex.result?.maxScore);
+      const scoreText = score == null
+        ? "N/A"
+        : maxScore == null
+        ? `${score}`
+        : `${score}/${maxScore}`;
+
+      const rawMetrics = ex.result?.rawMetrics ?? {};
+      const topMetrics = Object.entries(rawMetrics)
+        .filter(([, v]) => ["number", "string", "boolean"].includes(typeof v))
+        .slice(0, 4)
+        .map(([k, v]) => `${k}: ${String(v)}`)
+        .join(" | ");
+
+      return [
+        exerciseInfo?.name || ex.exerciseId,
+        scoreText,
+        ex.result?.interpretation || "N/A",
+        topMetrics || "No metrics",
+      ];
     });
+
+    if (yPos > 180) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("Assessment-Level Summary", 20, yPos);
+    yPos += 6;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Completed exercises: ${completedWithScores.length}`, 20, yPos);
+    yPos += 5;
+    doc.text(`Total assessment score (sum): ${totalAssessmentScore.toFixed(2)}`, 20, yPos);
+    yPos += 5;
+    if (norm) {
+      doc.text(`Norm mean/sd (${ageYears}y): ${norm.mean}/${norm.sd}`, 20, yPos);
+      yPos += 5;
+      doc.text(`z-score: ${zScore?.toFixed(3)} | Interpretation: ${interp}`, 20, yPos);
+      yPos += 6;
+    } else {
+      doc.text("z-score: N/A (age group not 6y/7y)", 20, yPos);
+      yPos += 6;
+    }
 
     autoTable(doc, {
       startY: yPos,
@@ -237,6 +316,12 @@ export function generateAssessmentReport(assessment: Partial<AssessmentData>): j
       theme: "striped",
       styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [0, 120, 180], textColor: 255 },
+      columnStyles: {
+        0: { cellWidth: 42 },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 86 },
+      },
       margin: { left: 20, right: 20 }
     });
 

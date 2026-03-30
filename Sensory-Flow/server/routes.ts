@@ -52,7 +52,10 @@ export async function registerRoutes(
         res.status(400).json({ error: "Validation failed", details: error.errors });
       } else {
         console.error("Error creating assessment:", error);
-        res.status(500).json({ error: "Failed to create assessment" });
+        res.status(500).json({
+          error: "Failed to create assessment",
+          details: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   });

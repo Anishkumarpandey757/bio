@@ -1,13 +1,10 @@
-import { 
-  users, 
-  assessments,
-  type SelectUser, 
+import {
+  type SelectUser,
   type InsertUserDB,
   type SelectAssessment,
-  type InsertAssessmentDB
+  type InsertAssessmentDB,
 } from "@shared/schema";
-import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { MongoClient, Db } from "mongodb";
 
 export interface IStorage {
   getUser(id: number): Promise<SelectUser | undefined>;
@@ -21,54 +18,94 @@ export interface IStorage {
   deleteAssessment(id: number): Promise<boolean>;
 }
 
+let mongoClient: MongoClient | null = null;
+let mongoDb: Db | null = null;
+
+async function getMongoDb(): Promise<Db> {
+  if (mongoDb) return mongoDb;
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error("MONGODB_URI is not set. Please configure MongoDB Atlas URI in .env");
+  }
+  mongoClient = new MongoClient(uri);
+  await mongoClient.connect();
+  mongoDb = mongoClient.db("sensory_flow");
+  return mongoDb;
+}
+
 export class DatabaseStorage implements IStorage {
   async getUser(id: number): Promise<SelectUser | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user || undefined;
+    return undefined;
   }
 
   async getUserByUsername(username: string): Promise<SelectUser | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user || undefined;
+    return undefined;
   }
 
   async createUser(insertUser: InsertUserDB): Promise<SelectUser> {
-    const [user] = await db
-      .insert(users)
-      .values(insertUser)
-      .returning();
-    return user;
+    throw new Error("User storage not implemented for MongoDB in this project");
   }
 
   async createAssessment(insertAssessment: InsertAssessmentDB): Promise<SelectAssessment> {
-    const [assessment] = await db
-      .insert(assessments)
-      .values(insertAssessment)
-      .returning();
-    return assessment;
+    const db = await getMongoDb();
+    const counters = db.collection<{ _id: string; seq: number }>("counters");
+    const assessments = db.collection("assessments");
+
+    const counter = await counters.findOneAndUpdate(
+      { _id: "assessment_id" },
+      { $inc: { seq: 1 } },
+      { upsert: true, returnDocument: "after" },
+    );
+    const id = Number(counter?.seq ?? 1);
+
+    const doc: SelectAssessment = {
+      id,
+      demographic: insertAssessment.demographic as any,
+      birthMedical: insertAssessment.birthMedical as any,
+      physicalParameters: insertAssessment.physicalParameters as any,
+      educationalInfo: insertAssessment.educationalInfo as any,
+      caregiverInfo: (insertAssessment.caregiverInfo as any) ?? null,
+      therapistInfo: insertAssessment.therapistInfo as any,
+      ageGroup: insertAssessment.ageGroup,
+      exercises: insertAssessment.exercises as any,
+      status: insertAssessment.status ?? "draft",
+      createdAt: new Date(),
+      completedAt: null,
+    };
+
+    await assessments.insertOne(doc as any);
+    return doc;
   }
 
   async getAssessment(id: number): Promise<SelectAssessment | undefined> {
-    const [assessment] = await db.select().from(assessments).where(eq(assessments.id, id));
-    return assessment || undefined;
+    const db = await getMongoDb();
+    const assessments = db.collection<SelectAssessment>("assessments");
+    const assessment = await assessments.findOne({ id });
+    return assessment ?? undefined;
   }
 
   async getAllAssessments(): Promise<SelectAssessment[]> {
-    return await db.select().from(assessments).orderBy(desc(assessments.createdAt));
+    const db = await getMongoDb();
+    const assessments = db.collection<SelectAssessment>("assessments");
+    return await assessments.find({}).sort({ createdAt: -1 }).toArray();
   }
 
   async updateAssessment(id: number, updateData: Partial<InsertAssessmentDB>): Promise<SelectAssessment | undefined> {
-    const [assessment] = await db
-      .update(assessments)
-      .set(updateData)
-      .where(eq(assessments.id, id))
-      .returning();
-    return assessment || undefined;
+    const db = await getMongoDb();
+    const assessments = db.collection<SelectAssessment>("assessments");
+    const result = await assessments.findOneAndUpdate(
+      { id },
+      { $set: updateData as any },
+      { returnDocument: "after" },
+    );
+    return result ?? undefined;
   }
 
   async deleteAssessment(id: number): Promise<boolean> {
-    const result = await db.delete(assessments).where(eq(assessments.id, id)).returning();
-    return result.length > 0;
+    const db = await getMongoDb();
+    const assessments = db.collection("assessments");
+    const result = await assessments.deleteOne({ id });
+    return result.deletedCount > 0;
   }
 }
 

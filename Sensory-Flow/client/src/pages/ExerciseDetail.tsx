@@ -52,6 +52,8 @@ export default function ExerciseDetail({ params }: ExerciseDetailProps) {
   const handleUploadFront = (file: File) => {
     const videoUrl = URL.createObjectURL(file);
     updateExercise(exerciseId, {
+      status: "ready",
+      result: undefined,
       frontVideo: {
         videoFile: file,
         videoUrl,
@@ -63,6 +65,8 @@ export default function ExerciseDetail({ params }: ExerciseDetailProps) {
   const handleUploadSide = (file: File) => {
     const videoUrl = URL.createObjectURL(file);
     updateExercise(exerciseId, {
+      status: "ready",
+      result: undefined,
       sideVideo: {
         videoFile: file,
         videoUrl,
@@ -81,6 +85,8 @@ export default function ExerciseDetail({ params }: ExerciseDetailProps) {
 
     if (side === "front" && current.frontVideo) {
       updateExercise(exerciseId, {
+        status: "ready",
+        result: undefined,
         frontVideo: {
           ...current.frontVideo,
           trimStart: start,
@@ -90,6 +96,8 @@ export default function ExerciseDetail({ params }: ExerciseDetailProps) {
       });
     } else if (side === "side" && current.sideVideo) {
       updateExercise(exerciseId, {
+        status: "ready",
+        result: undefined,
         sideVideo: {
           ...current.sideVideo,
           trimStart: start,
@@ -107,6 +115,8 @@ export default function ExerciseDetail({ params }: ExerciseDetailProps) {
     if (side === "front" && current.frontVideo?.videoUrl) {
       URL.revokeObjectURL(current.frontVideo.videoUrl);
       updateExercise(exerciseId, {
+        status: "empty",
+        result: undefined,
         frontVideo: {
           status: "empty",
         },
@@ -114,6 +124,8 @@ export default function ExerciseDetail({ params }: ExerciseDetailProps) {
     } else if (side === "side" && current.sideVideo?.videoUrl) {
       URL.revokeObjectURL(current.sideVideo.videoUrl);
       updateExercise(exerciseId, {
+        status: "empty",
+        result: undefined,
         sideVideo: {
           status: "empty",
         },
