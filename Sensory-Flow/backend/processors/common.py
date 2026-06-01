@@ -44,13 +44,15 @@ def convert_mov_to_mp4(mov_path: str) -> Tuple[Optional[str], Optional[str]]:
     base_dir = os.path.dirname(mov_path)
     base_name = os.path.splitext(os.path.basename(mov_path))[0]
     mp4_path = os.path.join(base_dir, f"{base_name}_converted.mp4")
-    
+
     try:
-        # Run ffmpeg conversion
+        # Run ffmpeg conversion – use CRF 10 (near-lossless) to preserve
+        # pose-landmark quality and -vsync cfr to normalise VFR iPhone footage.
         cmd = [
             "ffmpeg", "-y", "-i", mov_path,
+            "-vsync", "cfr",
             "-c:v", "libx264", "-preset", "fast",
-            "-crf", "23", "-an", mp4_path
+            "-crf", "10", "-an", mp4_path
         ]
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=300
@@ -69,44 +71,162 @@ def convert_mov_to_mp4(mov_path: str) -> Tuple[Optional[str], Optional[str]]:
         return None, f"Conversion error: {str(e)}"
 
 
-def ensure_video_readable(video_path: str) -> Tuple[str, Optional[str]]:
+def _detect_video_rotation(video_path: str) -> int:
     """
-    Ensure video is readable by OpenCV. If MOV, try to convert to MP4.
-    
+    Detect if video needs rotation by checking if person appears sideways.
+    Uses a quick pose check on the first few frames.
+    Returns rotation angle: 0, 90, or 270 (degrees counterclockwise).
+    """
+    import mediapipe as mp
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return 0
+
+    mp_pose_tmp = mp.solutions.pose
+    pose = mp_pose_tmp.Pose(model_complexity=0, min_detection_confidence=0.5, min_tracking_confidence=0.3)
+
+    dx_samples = []
+    dy_samples = []
+
+    try:
+        for _ in range(30):  # sample first 30 frames
+            ok, frame = cap.read()
+            if not ok:
+                break
+            res = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if res.pose_landmarks:
+                lms = res.pose_landmarks.landmark
+                sh_x = (lms[11].x + lms[12].x) / 2
+                sh_y = (lms[11].y + lms[12].y) / 2
+                hp_x = (lms[23].x + lms[24].x) / 2
+                hp_y = (lms[23].y + lms[24].y) / 2
+                dx_samples.append(abs(sh_x - hp_x))
+                dy_samples.append(abs(sh_y - hp_y))
+    finally:
+        cap.release()
+        pose.close()
+
+    if len(dx_samples) < 3:
+        return 0
+
+    mean_dx = float(np.mean(dx_samples))
+    mean_dy = float(np.mean(dy_samples))
+
+    # If horizontal separation >> vertical separation, person is sideways
+    if mean_dx > mean_dy * 2.0 and mean_dy < 0.05:
+        # Check direction: if shoulder is to the LEFT of hip (lower x), rotate 90° CW
+        sh_xs = [(lms[11].x + lms[12].x) / 2 for _ in [None]]  # just use the last detection
+        hp_xs = [(lms[23].x + lms[24].x) / 2 for _ in [None]]
+        # Person lying with head to the left: rotate 90° clockwise (270° counterclockwise)
+        # Person lying with head to the right: rotate 90° counterclockwise
+        avg_sh_x = float(np.mean([dx_samples[i] for i in range(len(dx_samples))]))  # dummy
+        print(f"[VIDEO ROTATION] Person sideways (dx={mean_dx:.3f}, dy={mean_dy:.3f}). Rotating 90°.")
+        return 90
+    return 0
+
+
+def _get_ffprobe_rotation(video_path: str) -> int:
+    """Try to get rotation metadata from video using ffprobe."""
+    try:
+        cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+               "-show_entries", "stream_tags=rotate", "-of", "csv=p=0", video_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            return int(result.stdout.strip())
+    except Exception:
+        pass
+    # Also try side_data_list for newer formats
+    try:
+        cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+               "-show_entries", "stream_side_data_list", "-of", "json", video_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            import json
+            data = json.loads(result.stdout)
+            for stream in data.get("streams", []):
+                for sd in stream.get("side_data_list", []):
+                    rot = sd.get("rotation")
+                    if rot is not None:
+                        return int(rot)
+    except Exception:
+        pass
+    return 0
+
+
+def ensure_video_readable(video_path: str, apply_rotation: bool = True) -> Tuple[str, Optional[str]]:
+    """
+    Ensure video is readable by OpenCV. Handles:
+    1. MOV files that OpenCV can't read -> ffmpeg conversion
+    2. Videos with rotation metadata (iPhone portrait) -> ffmpeg auto-rotate
+       (only when apply_rotation=True)
+
     Args:
-        video_path: Path to the video file
-        
+        video_path: path to video file
+        apply_rotation: if True, apply ffprobe rotation metadata via ffmpeg.
+            Set False for exercises (e.g. tandem walking) whose scoring bins
+            were calibrated from Colab which reads raw un-rotated frames.
+
     Returns:
         Tuple of (usable_path, error_message)
-        - If readable: (video_path, None)
-        - If converted: (mp4_path, None)
-        - If failed: (original_path, error_message)
     """
     if not video_path or not os.path.exists(video_path):
         return video_path, "File not found"
-    
+
     # First, try to open directly
     cap = cv2.VideoCapture(video_path)
-    if cap.isOpened():
+    if not cap.isOpened():
+        cap.release()
+        # If MOV file, try ffmpeg conversion
+        ext = os.path.splitext(video_path)[1].lower()
+        if ext == ".mov" and is_ffmpeg_available():
+            print(f"[VIDEO] MOV not readable, converting with ffmpeg...")
+            mp4_path, err = convert_mov_to_mp4(video_path)
+            if mp4_path:
+                video_path = mp4_path
+            else:
+                return video_path, f"MOV file cannot be read. {err}"
+        else:
+            return video_path, f"Video cannot be opened by OpenCV: {video_path}"
+    else:
         frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
-        if frames > 0:
-            return video_path, None
-    cap.release()
-    
-    # If MOV/QuickTime file couldn't be opened, try ffmpeg conversion
-    ext = os.path.splitext(video_path)[1].lower()
-    if ext == ".mov":
-        print(f"[VIDEO] MOV file not readable by OpenCV, attempting ffmpeg conversion...")
-        mp4_path, err = convert_mov_to_mp4(video_path)
-        if mp4_path:
-            print(f"[VIDEO] Successfully converted to: {mp4_path}")
-            return mp4_path, None
-        else:
-            print(f"[VIDEO] Conversion failed: {err}")
-            return video_path, f"MOV file cannot be read. {err}"
-    
-    return video_path, f"Video file cannot be opened by OpenCV: {video_path}"
+        if frames == 0:
+            return video_path, "Video has 0 frames"
+
+    # Check rotation metadata via ffprobe and apply if requested
+    if apply_rotation:
+        rotation = 0
+        if is_ffmpeg_available():
+            rotation = _get_ffprobe_rotation(video_path)
+
+        if rotation != 0:
+            print(f"[VIDEO] Rotation metadata={rotation}, re-encoding with auto-rotate...")
+            base_dir = os.path.dirname(video_path)
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            rotated_path = os.path.join(base_dir, f"{base_name}_rotated.mp4")
+            if not os.path.exists(rotated_path):
+                try:
+                    cmd = [
+                        "ffmpeg", "-y", "-i", video_path,
+                        "-vsync", "cfr",
+                        "-c:v", "libx264", "-preset", "fast",
+                        "-crf", "10", "-an", rotated_path
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    if result.returncode == 0 and os.path.exists(rotated_path):
+                        print(f"[VIDEO] Auto-rotated to: {rotated_path}")
+                        return rotated_path, None
+                except Exception as e:
+                    print(f"[VIDEO] Auto-rotate failed: {e}")
+            elif os.path.exists(rotated_path):
+                return rotated_path, None
+
+    # Pose-based rotation detection is disabled: it false-positives on prone/supine
+    # exercises where the subject is intentionally horizontal and trips the
+    # "dx >> dy" heuristic, then rotates a perfectly good side-view by 90°.
+    # We now trust ffprobe metadata as the only source of truth for rotation.
+
+    return video_path, None
 
 # MediaPipe setup
 import mediapipe as mp

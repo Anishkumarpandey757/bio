@@ -28,16 +28,20 @@ interface DualVideoExerciseCardProps {
   onTrimSave: (side: "front" | "side", start: number, end: number) => void;
   onRemove: (side: "front" | "side") => void;
   onProcess: () => Promise<void>;
+  observation?: string;
+  onObservationChange?: (value: string) => void;
 }
 
-export function DualVideoExerciseCard({ 
-  exercise, 
-  videoData, 
+export function DualVideoExerciseCard({
+  exercise,
+  videoData,
   onUploadFront,
   onUploadSide,
-  onTrimSave, 
+  onTrimSave,
   onRemove,
-  onProcess
+  onProcess,
+  observation,
+  onObservationChange
 }: DualVideoExerciseCardProps) {
   const requirements = exerciseVideoRequirements[exercise.id] || { front: false, side: false };
   const [isPlayingFront, setIsPlayingFront] = useState(false);
@@ -536,6 +540,23 @@ export function DualVideoExerciseCard({
           </div>
         )}
       </div>
+
+      {/* Additional observation input for Jumping Jacks */}
+      {onObservationChange && exercise.id === "jumping_jacks" && (
+        <div className="px-4 pb-4 border-t border-border pt-3">
+          <label className="text-sm font-semibold text-foreground block mb-2">
+            Number of total correct jumps
+          </label>
+          <input
+            type="number"
+            min={0}
+            value={observation || ""}
+            onChange={(e) => onObservationChange(e.target.value)}
+            placeholder="Enter number"
+            className="w-32 px-3 py-1.5 rounded-md border border-input bg-background text-sm"
+          />
+        </div>
+      )}
     </Card>
   );
 }

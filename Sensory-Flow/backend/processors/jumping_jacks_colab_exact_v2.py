@@ -474,18 +474,13 @@ def extract_jumping_jacks_metrics_colab_exact(front_video_path: Optional[str] = 
             arm_leg_open_dt = []
             arm_leg_close_dt = []
             fps = float(fps_front) if fps_front and fps_front > 0 else 30.0
-            # Open sync: use start of rep only so we pair opening edges from same rep (colab ~0.3s).
-            # Look from s back 1s for edges that started this rep, and cap search at s + 0.5s.
-            lookback = max(1, int(fps * 1.0))
-            open_span = max(1, int(fps * 0.5))
             for (s, e) in rep_windows:
-                s_open = max(0, s - lookback)
-                e_open = min(len(arms_both_open), s + open_span)
-                a_o = first_edge_in_window(A_open_idx, s_open, e_open)
-                g_o = first_edge_in_window(G_open_idx, s_open, e_open)
+                a_o = first_edge_in_window(A_open_idx, s, e)
+                g_o = first_edge_in_window(G_open_idx, s, e)
                 if a_o is not None and g_o is not None:
                     dt = abs(a_o - g_o) / fps
-                    if dt <= 2.0:
+                    rep_dur = (e - s) / fps
+                    if dt <= rep_dur:
                         arm_leg_open_dt.append(dt)
                 a_c = first_edge_in_window(A_close_idx, s, e)
                 g_c = first_edge_in_window(G_close_idx, s, e)

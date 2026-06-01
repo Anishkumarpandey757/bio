@@ -267,10 +267,20 @@ def extract_supine_flexion_metrics(video_path: str, age_years: int = 7) -> Dict[
 
     metrics = {}
     
-    # Clip-level means (raw display)
+    # Clip-level means with Colab-matching clip ranges before averaging
+    _CLIP_RANGES = {
+        "neck_flex": (0, 45),
+        "trunk_flex": (0, 80),
+        "hip_R": (0, 120), "hip_L": (0, 120),
+        "knee_R": (0, 135), "knee_L": (0, 135),
+    }
     for col in ["neck_flex", "trunk_flex", "hip_R", "hip_L", "knee_R", "knee_L", "shoulder_h", "nose_sh_dist"]:
         if col in df.columns:
-            mean_val = float(df[col].mean(skipna=True))
+            vals = df[col].to_numpy(dtype=float)
+            if col in _CLIP_RANGES:
+                lo, hi = _CLIP_RANGES[col]
+                vals = np.clip(vals, lo, hi)
+            mean_val = float(np.nanmean(vals))
             metrics[f"{col}_mean"] = mean_val if np.isfinite(mean_val) else None
     
     # Scoring module expects these specific keys (with _deg suffix)

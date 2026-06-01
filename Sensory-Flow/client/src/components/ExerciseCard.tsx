@@ -24,14 +24,18 @@ interface ExerciseCardProps {
   onUpload: (file: File) => void;
   onTrimSave: (start: number, end: number) => void;
   onRemove: () => void;
+  observation?: string;
+  onObservationChange?: (value: string) => void;
 }
 
-export function ExerciseCard({ 
-  exercise, 
-  videoData, 
-  onUpload, 
-  onTrimSave, 
-  onRemove 
+export function ExerciseCard({
+  exercise,
+  videoData,
+  onUpload,
+  onTrimSave,
+  onRemove,
+  observation,
+  onObservationChange,
 }: ExerciseCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -399,6 +403,36 @@ export function ExerciseCard({
           </div>
         )}
       </div>
+
+      {/* Additional observation inputs for Prone/Supine */}
+      {onObservationChange && (exercise.id === "prone_extension" || exercise.id === "supine_flexion") && (
+        <div className="px-4 pb-4 border-t border-border pt-3">
+          <p className="text-sm font-semibold text-foreground mb-2">
+            {exercise.id === "prone_extension"
+              ? "Ability to assume prone extension"
+              : "Ability to assume supine flexion"}
+          </p>
+          <div className="flex flex-col gap-1.5">
+            {[
+              { value: "Unable to assume", label: "Unable to assume" },
+              { value: "Assumes segmentally", label: "Assumes segmentally" },
+              { value: "Assumes simultaneously", label: "Assumes simultaneously" },
+            ].map((opt) => (
+              <label key={opt.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name={`obs-${exercise.id}`}
+                  value={opt.value}
+                  checked={observation === opt.value}
+                  onChange={() => onObservationChange(opt.value)}
+                  className="accent-primary"
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

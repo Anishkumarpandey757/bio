@@ -1,4 +1,5 @@
 ols_env/
+.claude/
 
 *.mp4
 *.mov

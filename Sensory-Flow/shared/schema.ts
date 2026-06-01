@@ -88,6 +88,8 @@ export const exerciseVideoSchema = z.object({
   // New dual video support (front + side views)
   frontVideo: videoViewSchema.optional(),
   sideVideo: videoViewSchema.optional(),
+  // Additional observations (therapist-provided)
+  additionalObservation: z.string().optional(),
   // Exercise status and results
   status: z.enum(["empty", "uploading", "uploaded", "trimming", "ready", "processing", "completed", "error"]),
   result: z.object({

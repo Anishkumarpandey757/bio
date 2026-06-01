@@ -1,7 +1,7 @@
 """
 One Leg Standing processor - aligned with origin Colab calculations.
 Origin colabs: ols_rightleg_eo, ols_rightleg_ec, ols_left_leg_eo, ols_leftleg_ec.
-Variants: raised_leg (L/R), eyes_open (True/False). Sway reported as (90 - angle) to match origin.
+Variants: raised_leg (L/R), eyes_open (True/False). Sway reported as raw trunk_abs_deg (small = upright).
 """
 
 import os
@@ -132,8 +132,8 @@ def measure_ols_video_colab_exact(video_path, view="front", raised_leg="L", smoo
             res = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
             if not res.pose_landmarks:
-                # Match Colab column structure exactly
-                rows.append([np.nan] * 20)
+                # Match Colab column structure exactly (25 columns including toe landmarks)
+                rows.append([np.nan] * 25)
                 continue
 
             P2 = np.array([[lm.x * W, lm.y * H] for lm in res.pose_landmarks.landmark], dtype=float)
@@ -172,7 +172,7 @@ def measure_ols_video_colab_exact(video_path, view="front", raised_leg="L", smoo
             toeR_y = float(P2[32, 1]) if P2.shape[0] >= 33 else np.nan
 
             def _nh(y):
-                if not np.isfinite(px_scale) or px_scale <= 0 or not np.isfinite(y) or not np.isfinite(y_floor):
+                if not np.isfinite(px_scale) or not np.isfinite(y) or not np.isfinite(y_floor):
                     return np.nan
                 return max((y_floor - y) / px_scale, 0.0)
 
@@ -180,12 +180,24 @@ def measure_ols_video_colab_exact(video_path, view="front", raised_leg="L", smoo
                 raised_ank_h, raised_toe_h = _nh(ankL_y), _nh(toeL_y)
             else:
                 raised_ank_h, raised_toe_h = _nh(ankR_y), _nh(toeR_y)
+            # Environment robustness: "is the foot near the floor" is best
+            # captured by whichever part of the foot (toe or ankle) is lowest.
+            # On CPU/Windows MediaPipe, landmark 31/32 y-values often read a few
+            # pixels higher than Colab GPU output, keeping raised_toe_h above the
+            # 0.025–0.035 threshold even during a clear tap. Taking min(toe, ankle)
+            # gives tap sensitivity without changing the normal case: when toe
+            # detects correctly during a tap, toe_h < ankle_h, so min = toe_h.
+            both_finite = np.isfinite(raised_toe_h) and np.isfinite(raised_ank_h)
+            if both_finite:
+                raised_toe_h = min(raised_toe_h, raised_ank_h)
+            elif not np.isfinite(raised_toe_h) and np.isfinite(raised_ank_h):
+                raised_toe_h = raised_ank_h
 
             # Hand-hip distances (exact Colab method)
             wristL_norm = np.linalg.norm(P2[LM['L_WR']] - P2[LM['L_HP']]) / px_scale if np.isfinite(px_scale) and px_scale > 0 else np.nan
             wristR_norm = np.linalg.norm(P2[LM['R_WR']] - P2[LM['R_HP']]) / px_scale if np.isfinite(px_scale) and px_scale > 0 else np.nan
 
-            # Build row exactly as Colab does
+            # Build row exactly as Colab does (include toe landmarks x31/y31/x32/y32)
             rows.append([
                 trunk_signed_deg, trunk_abs_deg, neck_goni_deg,
                 hip_R, hip_L, knee_R, knee_L,
@@ -194,18 +206,20 @@ def measure_ols_video_colab_exact(video_path, view="front", raised_leg="L", smoo
                 y_floor, px_scale, sh2[0], sh2[1], hp2[0], hp2[1],
                 P2[29,0] if P2.shape[0] > 29 else np.nan, P2[29,1] if P2.shape[0] > 29 else np.nan,
                 P2[30,0] if P2.shape[0] > 30 else np.nan, P2[30,1] if P2.shape[0] > 30 else np.nan,
+                P2[31,0] if P2.shape[0] > 31 else np.nan, P2[31,1] if P2.shape[0] > 31 else np.nan,
+                P2[32,0] if P2.shape[0] > 32 else np.nan, P2[32,1] if P2.shape[0] > 32 else np.nan,
             ])
 
     cap.release()
 
-    # Column names exactly as Colab
+    # Column names exactly as Colab (including toe landmarks)
     cols = [
         "trunk_signed_deg", "trunk_abs_deg", "neck_goni_deg",
         "hip_R", "hip_L", "knee_R", "knee_L",
         "raised_ank_h", "raised_toe_h",
         "wristL_hipL_norm", "wristR_hipR_norm",
         "y_floor", "pelvis_px", "sh_x", "sh_y", "hp_x", "hp_y",
-        "x29", "y29", "x30", "y30"
+        "x29", "y29", "x30", "y30", "x31", "y31", "x32", "y32"
     ]
     
     df = pd.DataFrame(rows, columns=cols)
@@ -386,16 +400,13 @@ def summarize_neck_colab(df: pd.DataFrame):
     }
 
 def summarize_ols_clip_colab(df, fps, view):
-    """Match origin colab (ols_rightleg_eo_colab.py): report sway to align with reference.
-    trunk_abs_deg = angle from vertical (0=upright, 90=horizontal). Origin exports small values
-    (2-8°) for sway; scoring rubrics expect that convention. Convert (90 - angle) so output matches."""
+    """Match origin colab: report sway as raw trunk_abs_deg (small = upright, 2-8° typical).
+    Colab directly reports mean/sd of trunk_abs_deg without any transformation."""
     sway_abs = pd.Series(df.get("trunk_abs_deg", []), dtype=float).dropna()
     if len(sway_abs) == 0:
         return {"sway_mean_deg": np.nan, "sway_sd_deg": np.nan}
-    raw_mean = float(sway_abs.mean())
+    mean_deg = float(sway_abs.mean())
     sd_deg = float(sway_abs.std(ddof=0))
-    # Report as (90 - angle) so small tilt = small number, matching origin/reference
-    mean_deg = float(np.clip(90.0 - raw_mean, 0.0, 90.0))
     return {
         "sway_mean_deg": mean_deg,
         "sway_sd_deg": sd_deg,
@@ -471,8 +482,12 @@ def extract_ols_metrics_colab_exact(front_video_path: Optional[str] = None, side
             foot_s = ev_side.get("foot_touches_ankle", 0) or 0
             str_f = (ev_front or {}).get("strategy") or ""
             str_s = ev_side.get("strategy") or ""
-            # Safeguard: if one view has implausibly high toe count (e.g. pose noise), use the other view for scoring
-            TOE_OUTLIER_THRESH = 10
+            # Safeguard: only reject a view as noise if it's implausibly high
+            # (>50 touches in a balance hold is physically impossible) AND the
+            # other view is substantially lower. Previous threshold of 10 was
+            # rejecting legitimate high counts — eyes-closed children commonly
+            # tap 10–20 times in a single hold.
+            TOE_OUTLIER_THRESH = 50
             if toe_f > TOE_OUTLIER_THRESH and toe_s <= TOE_OUTLIER_THRESH:
                 metrics["toe_touches"] = int(toe_s)
             elif toe_s > TOE_OUTLIER_THRESH and toe_f <= TOE_OUTLIER_THRESH:
@@ -487,9 +502,7 @@ def extract_ols_metrics_colab_exact(front_video_path: Optional[str] = None, side
                 metrics["med_hip_deg"] = ev_side.get("med_hip_deg")
                 metrics["med_knee_deg"] = ev_side.get("med_knee_deg")
 
-    # Report med_trunk_deg in same convention as origin (small = small tilt): 90 - raw angle
-    if metrics.get("med_trunk_deg") is not None and np.isfinite(metrics["med_trunk_deg"]):
-        metrics["med_trunk_deg"] = float(np.clip(90.0 - metrics["med_trunk_deg"], 0.0, 90.0))
+    # Colab reports med_trunk_deg as raw trunk_abs_deg (small = upright) — no transformation needed
 
     print(f"[DEBUG OLS COLAB] Final metrics: sway_SS_mean={metrics['sway_SS_mean']}, sway_AP_mean={metrics['sway_AP_mean']}, toe_touches={metrics.get('toe_touches')}, front_toe={metrics.get('front_toe_touches')}, side_toe={metrics.get('side_toe_touches')}")
     return metrics

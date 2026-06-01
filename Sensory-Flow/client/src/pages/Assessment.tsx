@@ -174,6 +174,10 @@ function ExerciseUploadStep() {
     }
   };
 
+  const handleObservationChange = (exerciseId: string, value: string) => {
+    updateExercise(exerciseId, { additionalObservation: value });
+  };
+
   const handleBack = () => {
     setCurrentStep(6);
   };
@@ -241,6 +245,8 @@ function ExerciseUploadStep() {
                 }
                 onRemove={(side) => handleRemove(exercise.id, side)}
                 onProcess={() => handleProcessExercise(exercise.id)}
+                observation={videoData.additionalObservation}
+                onObservationChange={(val) => handleObservationChange(exercise.id, val)}
               />
             ) : (
               <ExerciseCard
@@ -252,6 +258,8 @@ function ExerciseUploadStep() {
                   handleTrimSave(exercise.id, "front", start, end)
                 }
                 onRemove={() => handleRemove(exercise.id, "front")}
+                observation={videoData.additionalObservation}
+                onObservationChange={(val) => handleObservationChange(exercise.id, val)}
               />
             );
 
